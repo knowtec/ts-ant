@@ -1,0 +1,7 @@
+:root { --font-heading: var(--font-roboto-slab); }
+h1, h2, h3, .heading {
+  font-family: var(--font-heading), ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  font-weight: 700;
+}
+h1 { font-weight: 800; }
+h2 { font-size: 3rem; margin-bottom: 20px; }

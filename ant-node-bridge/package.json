@@ -1,0 +1,17 @@
+{
+  "name": "ant-node-bridge",
+  "version": "0.2.1",
+  "private": true,
+  "type": "commonjs",
+  "main": "ant-bridge.cjs",
+  "scripts": {
+    "start": "node ant-bridge.cjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.6.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "incyclist-ant-plus": "^0.3.5",
+    "ws": "^8.18.0"
+  }
+}
