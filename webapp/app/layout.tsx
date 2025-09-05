@@ -2,7 +2,7 @@ import './global.css';
 import { robotoSlab, archivo } from "../fonts";
 
 export const metadata = {
-  title: "TermoShop Charity Ride",
+  title: "Termo Shop x L'ETAPE SLovenia",
   description: "ANT+ leaderboard (Node+SQLite)",
 };
 export default function RootLayout({

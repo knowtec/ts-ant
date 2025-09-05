@@ -67,13 +67,14 @@ function Modal({
           <button
             onClick={onClose}
             style={{
-              fontSize: 20,
+              fontSize: 16,
               background: "#fff",
               border: "1px solid black",
               color: "#000",
-              padding: "15px",
+              padding: "10px",
               display: "block",
               width: "100%",
+              borderRadius: 25,
             }}
           >
             Zapri
@@ -93,14 +94,20 @@ export default function Page() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [session, setSession] = useState<any | null>(null);
 
-  const [autoRunning, setAutoRunning] = useState(true); //spremeni nazaj na FALSE
-  const [countdown, setCountdown] = useState<number>(60); //spremeni nazaj na 0
+  const [autoRunning, setAutoRunning] = useState(false); //spremeni nazaj na FALSE
+  const [countdown, setCountdown] = useState<number>(0); //spremeni nazaj na 0
   const [pendingId, setPendingId] = useState<number | null>(null);
 
   // modal form
   const [name, setName] = useState("");
   const [gender, setGender] = useState<"M" | "F">("M");
   const [modalOpen, setModalOpen] = useState(false);
+
+  // --- rekord animacija & highlight ---
+  const [showRecord, setShowRecord] = useState(false);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const lastSavedIdRef = useRef<number | null>(null); // ID seje po "Shrani"
+  const celebratedIdRef = useRef<number | null>(null); // da animacije ne podvajamo
 
   const [pendingSummary, setPendingSummary] = useState<{
     id: number;
@@ -113,6 +120,62 @@ export default function Page() {
   const countdownRef = useRef<any>(null);
   const lastAutostartTsRef = useRef<number>(0);
   const autoEndAtRef = useRef<number | undefined>(undefined);
+
+  // --- ZONE overlay ---
+  type Zone = {
+    id: string;
+    name: string;
+    color: string;
+    min: number;
+    max: number;
+  }; // min/max so % FTP (0–1.5)
+
+  const DEFAULT_FTP = Number(localStorage?.getItem("ftp_w") ?? 250);
+  const DEFAULT_ZONE_ON = localStorage?.getItem("zone_on") !== "0";
+
+  const ZONES: Zone[] = [
+    { id: "Z1", name: "Recovery", color: "#3b82f6", min: 0.0, max: 0.55 }, // modra
+    { id: "Z2", name: "Endurance", color: "#22c55e", min: 0.56, max: 0.75 }, // zelena
+    { id: "Z3", name: "Tempo", color: "#f59e0b", min: 0.76, max: 0.9 }, // oranžno-rumena
+    { id: "Z4", name: "Threshold", color: "#f97316", min: 0.91, max: 1.05 }, // oranžna
+    { id: "Z5", name: "VO2 Max", color: "#ef4444", min: 1.06, max: 1.2 }, // rdeča
+    { id: "Z6", name: "Anaerobic", color: "#dc2626", min: 1.21, max: 9.99 }, // temno rdeča
+  ];
+
+  const [ftp, setFtp] = useState<number>(DEFAULT_FTP);
+  const [zoneOn, setZoneOn] = useState<boolean>(DEFAULT_ZONE_ON);
+
+  // simulacija (za test, ne vpliva na bridge)
+  const [simOn, setSimOn] = useState<boolean>(false);
+  const [simPower, setSimPower] = useState<number>(0);
+
+  // izračun cone
+  function getZone(powerW: number, ftpW: number) {
+    const p = Math.max(0, powerW);
+    const pct = ftpW > 0 ? p / ftpW : 0;
+    const z = ZONES.find((z) => pct >= z.min && pct <= z.max) || ZONES[0];
+    return { ...z, pct, power: p };
+  }
+
+  // intenziteta in hitrost pulza po coni
+  function zoneVisuals(zoneId: string) {
+    switch (zoneId) {
+      case "Z1":
+        return { alpha: 0.06, dur: 2600 };
+      case "Z2":
+        return { alpha: 0.09, dur: 2200 };
+      case "Z3":
+        return { alpha: 0.12, dur: 1800 };
+      case "Z4":
+        return { alpha: 0.16, dur: 1500 };
+      case "Z5":
+        return { alpha: 0.2, dur: 1300 };
+      case "Z6":
+        return { alpha: 0.22, dur: 1100 };
+      default:
+        return { alpha: 0.1, dur: 2000 };
+    }
+  }
 
   const modalOpenRef = useRef(false);
   useEffect(() => {
@@ -223,6 +286,24 @@ export default function Page() {
             womenWh60: msg.womenWh60 ?? [],
             womenPeakW: msg.womenPeakW ?? [],
           });
+          const myId = lastSavedIdRef.current;
+          if (myId && celebratedIdRef.current !== myId) {
+            const firsts = [
+              msg.menWh60?.[0],
+              msg.menPeakW?.[0],
+              msg.womenWh60?.[0],
+              msg.womenPeakW?.[0],
+            ].filter(Boolean);
+
+            const isRecord = firsts.some((r: any) => r?.id === myId);
+            if (isRecord) {
+              setHighlightId(myId); // vizualni highlight v tabelah
+              setShowRecord(true); // pokaži konfete/efekt
+              celebratedIdRef.current = myId;
+              // po 6s ugasni highlight (po želji)
+              setTimeout(() => setHighlightId(null), 6000);
+            }
+          }
         }
       } catch {}
     };
@@ -280,6 +361,10 @@ export default function Page() {
   const lastCadence = useLastDefined(latest?.cadence);
   const lastSpeed = useLastDefined(latest?.speedKph);
 
+  const effectivePower = simOn ? simPower : lastPower ?? 0;
+  const zone = getZone(effectivePower, ftp);
+  const zVis = zoneVisuals(zone.id);
+
   // 2) animiraj
   const aPower = useAnimatedNumber(lastPower, { duration: 300 });
   const aCadence = useAnimatedNumber(lastCadence, { duration: 300 });
@@ -325,7 +410,7 @@ export default function Page() {
             borderRadius: 16,
             boxShadow: "0 10px 30px rgba(2,6,23,.06)",
             display: "flex",
-            position: "relative"
+            position: "relative",
           }}
         >
           <img
@@ -406,11 +491,12 @@ export default function Page() {
                   <button
                     onClick={connect}
                     style={{
-                      padding: "5px 15px",
+                      padding: "10px 15px",
                       borderRadius: 12,
-                      border: `1px solid ${colorGrey}`,
-                      background: colorGrey,
+                      border: `1px solid ${colorRed}`,
+                      background: colorRed,
                       color: "white",
+                      fontSize: 18,
                     }}
                   >
                     {connected ? "Povezano" : "Poveži s trenažerjem"}
@@ -478,7 +564,7 @@ export default function Page() {
           </div> */}
         </section>
         {/* Right: Leaderboards & totals */}
-        <RightPanels lb={lb} stats={stats} />
+        <RightPanels lb={lb} stats={stats} highlightId={highlightId} />
       </div>
 
       {/* Modal za poimenovanje po auto 60 s */}
@@ -540,7 +626,9 @@ export default function Page() {
             </div>
           </div>
         )}
-        <h3 style={{ marginTop: 0 }}>Vnesi ime, primek in spol tekmovalca</h3>
+        <h3 style={{ marginTop: 0, fontSize: 40, marginBottom: 20 }}>
+          Vnesi ime, primek in spol tekmovalca
+        </h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
           <input
             placeholder="Ime in Priimek"
@@ -550,14 +638,17 @@ export default function Page() {
               padding: 10,
               borderRadius: 10,
               border: "1px solid #e2e8f0",
+              height: "50px",
+              marginBottom: 20,
             }}
           />
-          <div style={{ display: "flex", gap: 16 }}>
+          <div style={{ display: "flex", gap: 16, marginBottom: 30 }}>
             <label>
               <input
                 type="radio"
                 checked={gender === "M"}
                 onChange={() => setGender("M")}
+                style={{ width: "50px", height: "50px" }}
               />{" "}
               M
             </label>
@@ -566,6 +657,7 @@ export default function Page() {
                 type="radio"
                 checked={gender === "F"}
                 onChange={() => setGender("F")}
+                style={{ width: "50px", height: "50px" }}
               />{" "}
               Ž
             </label>
@@ -579,6 +671,7 @@ export default function Page() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ id: pendingId, name, gender }),
               });
+              lastSavedIdRef.current = pendingId;
               // brez fetch refetcha – bridge pošlje 'leaderboard_all' po WS
               setModalOpen(false);
               setPendingId(null);
@@ -588,6 +681,7 @@ export default function Page() {
             style={{
               padding: "18px 22px",
               borderRadius: 25,
+              fontSize: 16,
               border: "1px solid #e11d48",
               background: "#e11d48",
               color: "white",
@@ -597,6 +691,101 @@ export default function Page() {
           </button>
         </div>
       </Modal>
+      <ZoneOverlay
+        show={zoneOn}
+        color={zone.color}
+        alpha={zVis.alpha}
+        duration={zVis.dur}
+        label={`${zone.id} • ${zone.name} • ${Math.round(
+          zone.pct * 100
+        )}% FTP • ${Math.round(effectivePower)} W`}
+      />
+      <RecordOverlay show={showRecord} onDone={() => setShowRecord(false)} />
+      {/* simulacija CON */}
+      {/* <div
+        style={{
+          position: "fixed",
+          right: 12,
+          bottom: 12,
+          zIndex: 70,
+          background: "#ffffff",
+          border: "1px solid #e2e8f0",
+          borderRadius: 12,
+          padding: 12,
+          boxShadow: "0 10px 30px rgba(2,6,23,.12)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            marginBottom: 8,
+          }}
+        >
+          <label style={{ fontSize: 12, color: "#334155" }}>
+            <input
+              type="checkbox"
+              checked={zoneOn}
+              onChange={(e) => {
+                setZoneOn(e.target.checked);
+                try {
+                  localStorage.setItem("zone_on", e.target.checked ? "1" : "0");
+                } catch {}
+              }}
+            />{" "}
+            Zone overlay
+          </label>
+          <label style={{ fontSize: 12, color: "#334155" }}>
+            FTP:
+            <input
+              type="number"
+              value={ftp}
+              onChange={(e) => {
+                const v = Math.max(
+                  50,
+                  Math.min(800, Number(e.target.value) || 0)
+                );
+                setFtp(v);
+                try {
+                  localStorage.setItem("ftp_w", String(v));
+                } catch {}
+              }}
+              style={{ width: 72, marginLeft: 6 }}
+            />{" "}
+            W
+          </label>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ fontSize: 12, color: "#334155" }}>
+            <input
+              type="checkbox"
+              checked={simOn}
+              onChange={(e) => setSimOn(e.target.checked)}
+            />{" "}
+            Simulacija
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            step={10}
+            value={simPower}
+            onChange={(e) => setSimPower(Number(e.target.value))}
+            style={{ width: 160 }}
+            disabled={!simOn}
+          />
+          <div
+            style={{
+              width: 56,
+              textAlign: "right",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {simOn ? `${simPower} W` : ""}
+          </div>
+        </div>
+      </div> */}
     </main>
   );
 }
@@ -659,9 +848,11 @@ function ManualStart() {
 function RightPanels({
   lb,
   stats,
+  highlightId,
 }: {
   lb: Leaderboards | null;
   stats: Stats | null;
+  highlightId: number;
 }) {
   const colorRed = "#e11d48";
   return (
@@ -683,24 +874,28 @@ function RightPanels({
             rows={lb?.menWh60}
             valueKey="best_wh60"
             unit="Wh"
+            highlightId={highlightId}
           />
           <Board
             title="M - največji W (peak)"
             rows={lb?.menPeakW}
             valueKey="peak_w"
             unit="W"
+            highlightId={highlightId}
           />
           <Board
             title="Ž - največ Wh v 60 s"
             rows={lb?.womenWh60}
             valueKey="best_wh60"
             unit="Wh"
+            highlightId={highlightId}
           />
           <Board
             title="Ž - največji W (peak)"
             rows={lb?.womenPeakW}
             valueKey="peak_w"
             unit="W"
+            highlightId={highlightId}
           />
         </div>
       </div>
@@ -750,11 +945,13 @@ function Board({
   rows,
   valueKey,
   unit,
+  highlightId,
 }: {
   title: string;
   rows?: any[];
   valueKey: string;
   unit: string;
+  highlightId?: number | null;
 }) {
   const colorRed = "#e11d48";
   return (
@@ -771,43 +968,49 @@ function Board({
           color: "white",
           padding: "8px 12px",
           fontWeight: 700,
-          fontSize: "22px",
+          fontSize: "28px",
         }}
       >
         {title}
       </div>
       <ol style={{ margin: 0, padding: 12 }}>
-        {(rows || []).slice(0, 5).map((r, i) => (
-          <li
-            key={r.id}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "6px 0",
-              borderBottom: "1px dashed #e2e8f0",
-              fontSize: "20px",
-            }}
-          >
-            <div style={{ display: "flex", flex: 1 }}>
-              <b>{i + 1}. </b>
-              {r.name}{" "}
-            </div>
-
-            <div style={{ color: "grey", marginRight: 15 }}>
-              {" "}
-              {typeof r?.id === "number" ? `#${r.id}` : "—"}{" "}
-            </div>
-            <span>
-              <b>
-                {(r[valueKey] ?? 0).toFixed
-                  ? r[valueKey].toFixed(1)
-                  : r[valueKey]}
-              </b>{" "}
-              {unit}
-            </span>
-          </li>
-        ))}
+        {(rows || []).slice(0, 5).map((r, i) => {
+          const isHL = highlightId && r?.id === highlightId;
+          return (
+            <li
+              key={r.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                padding: "6px 0",
+                borderBottom: "1px dashed #e2e8f0",
+                fontSize: "24px",
+                borderRadius: 10,
+                boxShadow: isHL
+                  ? "0 0 0 4px rgba(219,11,51,.15), 0 0 24px rgba(219,11,51,.35)"
+                  : undefined,
+                background: isHL
+                  ? "linear-gradient(90deg, #fff6f7, #ffffff)"
+                  : undefined,
+                transition: "box-shadow .2s ease",
+              }}
+            >
+              <span>
+                {isHL ? "👑 " : ""}
+                <b>{i + 1}.</b> #{r.id ?? "—"}
+              </span>
+              <span>{r?.name}</span>
+              <span>
+                <b>
+                  {(r[valueKey] ?? 0).toFixed
+                    ? r[valueKey].toFixed(1)
+                    : r[valueKey]}
+                </b>{" "}
+                {unit}
+              </span>
+            </li>
+          );
+        })}
         {!rows?.length && (
           <div style={{ fontSize: 12, color: "#94a3b8" }}>
             Ni še rezultatov.
@@ -817,6 +1020,7 @@ function Board({
     </div>
   );
 }
+
 function StatBox({
   label,
   value,
@@ -855,14 +1059,14 @@ function BigCountdown({ seconds, show }: { seconds: number; show: boolean }) {
         pointerEvents: "none",
         zIndex: 60,
         background: "rgba(248,250,252,0.0)",
-        top: "50%",
+        top: "65%",
         transform: "translateY(-50%)",
-        right: 40
+        right: 60,
       }}
     >
       <div
         style={{
-          padding: "24px 36px",
+          padding: "12px 65px",
           borderRadius: 24,
           boxShadow: "0 20px 60px rgba(2,6,23,.25)",
           background: "white",
@@ -884,7 +1088,7 @@ function BigCountdown({ seconds, show }: { seconds: number; show: boolean }) {
           </div>
           <div
             style={{
-              fontSize: 160,
+              fontSize: 170,
               lineHeight: 1,
               fontWeight: 900,
               fontVariantNumeric: "tabular-nums", // da števke ne skačejo
@@ -892,7 +1096,7 @@ function BigCountdown({ seconds, show }: { seconds: number; show: boolean }) {
           >
             {seconds}
           </div>
-          <div style={{ fontSize: 16, color: "#334155" }}>sekund</div>
+          <div style={{ fontSize: 24, color: "#334155" }}>sekund</div>
         </div>
       </div>
     </div>
@@ -922,5 +1126,190 @@ function SmallStat({
         {value} <span style={{ fontSize: 35, color: "#64748b" }}>{unit}</span>
       </div>
     </div>
+  );
+}
+
+function RecordOverlay({
+  show,
+  onDone,
+}: {
+  show: boolean;
+  onDone: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!show) return;
+    const root = ref.current!;
+    // ustvari ~80 “konfetov”
+    const count = 80;
+    const els: HTMLDivElement[] = [];
+    for (let i = 0; i < count; i++) {
+      const el = document.createElement("div");
+      el.className = "confetti";
+      el.style.left = Math.random() * 100 + "vw";
+      el.style.top = "-10px";
+      el.style.setProperty("--rx", Math.random() * 720 - 360 + "deg");
+      el.style.setProperty("--ry", Math.random() * 720 - 360 + "deg");
+      el.style.setProperty("--tx", Math.random() * 60 - 30 + "vw");
+      el.style.setProperty("--dur", 2.5 + Math.random() * 1.5 + "s");
+      el.style.width = "10px";
+      el.style.height = "14px";
+      el.style.background = [
+        "#DB0B33",
+        "#ef4444",
+        "#f97316",
+        "#22c55e",
+        "#06b6d4",
+        "#a855f7",
+      ][Math.floor(Math.random() * 6)];
+      el.style.position = "fixed";
+      el.style.zIndex = "100";
+      el.style.willChange = "transform, opacity";
+      root.appendChild(el);
+      els.push(el);
+      // trigger animacijo
+      // @ts-ignore
+      el.animate(
+        [
+          { transform: "translate(0,0) rotateX(0) rotateY(0)", opacity: 1 },
+          {
+            transform: `translate(var(--tx), 100vh) rotateX(var(--rx)) rotateY(var(--ry))`,
+            opacity: 0.8,
+          },
+        ],
+        {
+          duration: parseFloat(el.style.getPropertyValue("--dur")) * 1000,
+          easing: "cubic-bezier(.2,.7,.3,1)",
+          fill: "forwards",
+        }
+      );
+    }
+    const t = setTimeout(() => {
+      onDone();
+    }, 3200);
+    return () => {
+      clearTimeout(t);
+      els.forEach((e) => e.remove());
+    };
+  }, [show, onDone]);
+
+  if (!show) return null;
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        inset: 0,
+        pointerEvents: "none",
+        zIndex: 90,
+      }}
+    >
+      {/* bonus: napis */}
+      <div
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          transform: "translateX(-50%)",
+          background: "rgba(255,255,255,0.9)",
+          border: "1px solid #fecdd3",
+          padding: "20px 45px",
+          fontWeight: 900,
+          fontSize: 120,
+          color: "#DB0B33",
+          boxShadow: "0 10px 40px rgba(2,6,23,.15)",
+        }}
+      >
+        <h2
+          style={{
+            fontWeight: 900,
+            fontSize: 120,
+            color: "#DB0B33",
+            margin: 0,
+          }}
+        >
+          🏆 NOV REKORD!
+        </h2>
+      </div>
+    </div>
+  );
+}
+
+// HEX -> rgba()
+function hexToRgba(hex: string, a: number) {
+  const s = hex.replace("#", "");
+  const r = parseInt(s.substring(0, 2), 16);
+  const g = parseInt(s.substring(2, 4), 16);
+  const b = parseInt(s.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function ZoneOverlay({
+  show,
+  color,
+  alpha,
+  duration,
+  label,
+}: {
+  show: boolean;
+  color: string;
+  alpha: number; // 0..1
+  duration: number; // ms
+  label?: string;
+}) {
+  if (!show) return null;
+  const bg = hexToRgba(color, alpha);
+  const ring = hexToRgba(color, Math.min(alpha + 0.07, 0.35));
+
+  return (
+    <>
+      <style jsx global>{`
+        @keyframes zonePulse {
+          0% {
+            opacity: 0;
+            transform: scale(1);
+          }
+          50% {
+            opacity: 1;
+            transform: scale(1.015);
+          }
+          100% {
+            opacity: 0;
+            transform: scale(1);
+          }
+        }
+      `}</style>
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          pointerEvents: "none",
+          zIndex: 45,
+          background: bg,
+          boxShadow: `inset 0 0 0 2px ${ring}`,
+          animation: `zonePulse ${duration}ms ease-in-out infinite`,
+          backdropFilter: "saturate(1.02) brightness(1.01)",
+        }}
+      />
+      {/* mala značka zgoraj levo */}
+      {/* <div
+        style={{
+          position: "fixed",
+          left: 12,
+          top: 12,
+          zIndex: 46,
+          background: "rgba(255,255,255,.9)",
+          border: `1px solid ${ring}`,
+          color: "#0f172a",
+          padding: "6px 10px",
+          borderRadius: 999,
+          fontWeight: 800,
+          boxShadow: "0 8px 30px rgba(2,6,23,.15)",
+        }}
+      >
+        {label}
+      </div> */}
+    </>
   );
 }
