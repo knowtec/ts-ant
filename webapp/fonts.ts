@@ -15,3 +15,11 @@ export const robotoSlab = localFont({
   variable: '--font-roboto-slab',
   display: 'swap',
 });
+
+export const archivo = localFont({
+  src: [
+    { path: './public/fonts/archivo/Archivo-Regular.ttf', weight: '400', style: 'normal' },
+    { path: './public/fonts/archivo/Archivo-Bold.ttf', weight: '500', style: 'normal' },  ],
+  variable: '--font-body',
+  display: 'swap',
+});

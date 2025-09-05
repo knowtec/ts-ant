@@ -2,6 +2,9 @@
 // Zahteve: npm i express cors ws better-sqlite3 incyclist-ant-plus
 // Driver: Windows (Zadig) -> ANT USB Stick 2 -> WinUSB
 
+require("dotenv").config(); // <— NOVO
+const ADMIN_PIN = String(process.env.ADMIN_PIN || "1234"); // <— NOVO
+
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
@@ -19,8 +22,8 @@ const DONATION_FACTOR = 1;
 const DB_PATH = path.join(__dirname, "ant.db");
 
 // --- AUTOSTART nastavitve (server-side) ---
-const AUTO_THRESHOLD_W = Number(process.env.AUTO_THRESHOLD_W || 200); // prag moči za start
-const AUTO_DEBOUNCE_MS = Number(process.env.AUTO_DEBOUNCE_MS || 35000); // min. razmik med poskusi
+const AUTO_THRESHOLD_W = Number(process.env.AUTO_THRESHOLD_W || 100); // prag moči za start
+const AUTO_DEBOUNCE_MS = Number(process.env.AUTO_DEBOUNCE_MS || 30000); // min. razmik med poskusi
 
 let autoLock = false; // če je true, server ne autostarta
 
@@ -173,6 +176,12 @@ wss.on("connection", (ws) => {
   ws.send(
     JSON.stringify({ type: "hello", port: WS_PORT, lib: "incyclist-ant-plus" })
   );
+
+  // Po priklopu takoj pošlji all-time leaderboard
+  try {
+    const lb = getAllTimeLeaderboard();
+    ws.send(JSON.stringify({ type: "leaderboard_all", ...lb }));
+  } catch {}
 });
 function wsSend(obj) {
   const msg = JSON.stringify(obj);
@@ -285,6 +294,75 @@ function extractCadence(d) {
 function extractSpeedKph(d) {
   const v = pickNum(d, ["RealSpeed", "speed", "Speed"]);
   return v == null ? null : v * 3.6;
+}
+
+// --- All-time leaderboard (TOP 5) in broadcast preko WS ---
+function getAllTimeLeaderboard() {
+  const rows = db
+    .prepare(
+      `
+    SELECT
+      LOWER(TRIM(s.name))                  AS grp,
+      MIN(s.name)                          AS name,
+      s.gender                             AS gender,
+      MAX(s.best_wh60)                     AS best_wh60,
+      MAX(s.peak_w)                        AS peak_w,
+      (
+        SELECT s2.id
+        FROM sessions s2
+        WHERE s2.end_ts IS NOT NULL
+          AND s2.gender = s.gender
+          AND s2.name IS NOT NULL AND TRIM(s2.name) <> ''
+          AND LOWER(TRIM(s2.name)) = LOWER(TRIM(s.name))
+        ORDER BY s2.best_wh60 DESC, s2.id DESC
+        LIMIT 1
+      )                                     AS id_best_wh60,
+      (
+        SELECT s3.id
+        FROM sessions s3
+        WHERE s3.end_ts IS NOT NULL
+          AND s3.gender = s.gender
+          AND s3.name IS NOT NULL AND TRIM(s3.name) <> ''
+          AND LOWER(TRIM(s3.name)) = LOWER(TRIM(s.name))
+        ORDER BY s3.peak_w DESC, s3.id DESC
+        LIMIT 1
+      )                                     AS id_peak_w
+    FROM sessions s
+    WHERE s.end_ts IS NOT NULL
+      AND s.name IS NOT NULL AND TRIM(s.name) <> ''
+      AND s.gender IN ('M','F')
+    GROUP BY LOWER(TRIM(s.name)), s.gender
+  `
+    )
+    .all();
+
+  const men = rows.filter((r) => r.gender === "M");
+  const women = rows.filter((r) => r.gender === "F");
+
+  const top5By = (arr, metricKey, idKey) =>
+    arr
+      .slice()
+      .sort((a, b) => (Number(b[metricKey]) || 0) - (Number(a[metricKey]) || 0))
+      .slice(0, 5)
+      .map((r) => ({
+        id: r[idKey], // <-- to boš izpisal kot #ID
+        name: r.name, // (lahko ignoriraš na frontendu)
+        gender: r.gender,
+        best_wh60: r.best_wh60,
+        peak_w: r.peak_w,
+      }));
+
+  return {
+    menWh60: top5By(men, "best_wh60", "id_best_wh60"),
+    menPeakW: top5By(men, "peak_w", "id_peak_w"),
+    womenWh60: top5By(women, "best_wh60", "id_best_wh60"),
+    womenPeakW: top5By(women, "peak_w", "id_peak_w"),
+  };
+}
+
+function broadcastLeaderboard() {
+  const payload = getAllTimeLeaderboard();
+  wsSend({ type: "leaderboard_all", ...payload });
 }
 
 (async () => {
@@ -448,6 +526,32 @@ app.post("/api/session/end", (req, res) => {
   res.json({ ok: true, ended });
 });
 
+// Pobriši sejo, če NI shranjena (gender='U' ali prazno ime) in je končana (ima end_ts)
+app.post("/api/session/discard", (req, res) => {
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ error: "id required" });
+
+  const row = db
+    .prepare("SELECT id, name, gender, end_ts FROM sessions WHERE id=?")
+    .get(id);
+
+  if (!row) return res.json({ ok: false, reason: "not_found" });
+  if (!row.end_ts) return res.status(409).json({ error: "session_not_ended" });
+
+  // brišemo samo, če NI shranjena (U ali prazno ime)
+  const unsaved = row.gender === "U" || !row.name || !row.name.trim();
+  if (!unsaved) return res.status(409).json({ error: "already_saved" });
+
+  const r = db.prepare("DELETE FROM sessions WHERE id=?").run(id);
+  if (r.changes > 0) {
+    wsSend({ type: "session_discarded", id });
+    broadcastLeaderboard(); // ker se je baza spremenila
+    return res.json({ ok: true });
+  }
+
+  res.json({ ok: false });
+});
+
 // RENAME po autostartu (po 60 s, ko UI pokaže modal)
 app.post("/api/session/rename", (req, res) => {
   const { id, name, gender } = req.body || {};
@@ -457,6 +561,12 @@ app.post("/api/session/rename", (req, res) => {
   const r = db
     .prepare("UPDATE sessions SET name=?, gender=? WHERE id=?")
     .run(name, g, id);
+
+  if (r.changes > 0) {
+    // takoj push na vse UI kliente
+    broadcastLeaderboard();
+  }
+
   res.json({ ok: r.changes > 0 });
 });
 
@@ -489,30 +599,6 @@ app.get("/api/leaderboard/today", (req, res) => {
   });
 });
 
-// Statistika (€ iz Wh)
-// app.get("/api/stats", (req, res) => {
-//   const date = todayStr();
-//   const t = db
-//     .prepare(
-//       "SELECT COALESCE(SUM(total_wh),0) wh FROM sessions WHERE date=? AND end_ts IS NOT NULL"
-//     )
-//     .get(date);
-//   const a = db
-//     .prepare(
-//       "SELECT COALESCE(SUM(total_wh),0) wh FROM sessions WHERE end_ts IS NOT NULL"
-//     )
-//     .get();
-//   const today_wh = toFixed1(t.wh || 0),
-//     all_wh = toFixed1(a.wh || 0);
-//   res.json({
-//     date,
-//     euro_per_wh: EURO_PER_WH,
-//     today_wh,
-//     today_eur: toFixed1(today_wh * EURO_PER_WH),
-//     all_wh,
-//     all_eur: toFixed1(all_wh * EURO_PER_WH),
-//   });
-// });
 app.get("/api/stats", (req, res) => {
   const date = todayStr();
   const t = db
@@ -537,6 +623,142 @@ app.get("/api/stats", (req, res) => {
     all_wh,
     all_eur: toFixed1(all_wh * DONATION_FACTOR),
   });
+});
+
+// ---- Admin helper ----
+function requireAdmin(req, res) {
+  const pin = String(
+    req.headers["x-admin-pin"] || req.body?.pin || req.query?.pin || ""
+  );
+  if (pin !== ADMIN_PIN) {
+    res.status(401).json({ error: "bad pin" });
+    return false;
+  }
+  return true;
+}
+
+// ---- Admin API ----
+// Seje današnjega dne (tudi nedokončane)
+app.get("/api/admin/sessions/today", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const rows = db
+    .prepare(
+      `SELECT id,name,gender,date,start_ts,end_ts,peak_w,best_wh60,total_wh
+     FROM sessions WHERE date=? ORDER BY start_ts DESC`
+    )
+    .all(todayStr());
+  res.json({ rows });
+});
+
+// Delete seje po ID (če je aktivna, jo prej zaključimo)
+app.delete("/api/admin/session/:id", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const id = Number(req.params.id);
+  if (current && current.id === id) endCurrentSession("admin_delete");
+  const r = db.prepare("DELETE FROM sessions WHERE id=?").run(id);
+  res.json({ ok: r.changes > 0 });
+});
+
+// Reset današnjega dne (pobriše vse današnje seje; če teče, zaključi in briše)
+app.post("/api/admin/resetToday", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const today = todayStr();
+  if (current) {
+    // če aktivna seja je od danes, jo zaključimo in pobrišemo
+    const s = current.snapshot();
+    endCurrentSession("admin_reset");
+    if (today === todayStr()) {
+      /* just keeping parity */
+    }
+  }
+  const r = db.prepare("DELETE FROM sessions WHERE date=?").run(today);
+  res.json({ ok: true, deleted: r.changes });
+});
+
+// --- ADMIN: seznam vseh dni s povzetki ---
+app.get("/api/admin/days", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const raw = db
+    .prepare(
+      `
+    SELECT date,
+           COUNT(*)                               AS sessions,
+           COALESCE(SUM(total_wh),0)              AS total_wh,
+           COALESCE(MAX(peak_w),0)                AS max_peak_w,
+           COALESCE(MAX(best_wh60),0)             AS max_best_wh60
+    FROM sessions
+    WHERE end_ts IS NOT NULL
+    GROUP BY date
+    ORDER BY date DESC
+  `
+    )
+    .all();
+
+  const rows = raw.map((r) => ({
+    date: r.date,
+    sessions: r.sessions,
+    total_wh: toFixed1(r.total_wh),
+    total_eur: toFixed1(r.total_wh * DONATION_FACTOR),
+    max_peak_w: toFixed1(r.max_peak_w),
+    max_best_wh60: toFixed1(r.max_best_wh60),
+  }));
+
+  res.json({ rows, euro_per_wh: DONATION_FACTOR });
+});
+
+// --- ADMIN: vse seje za izbran datum ---
+app.get("/api/admin/sessions/:date", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const date = String(req.params.date || "").trim();
+  const rows = db
+    .prepare(
+      `
+    SELECT id, name, gender, date, start_ts, end_ts, peak_w, best_wh60, total_wh
+    FROM sessions
+    WHERE date = ?
+    ORDER BY start_ts DESC
+  `
+    )
+    .all(date);
+  res.json({ date, rows });
+});
+
+// --- CSV izvoz za poljuben datum (poleg /api/export/today.csv) ---
+app.get("/api/export/:date.csv", (req, res) => {
+  const date = String(req.params.date || "").trim();
+  const rows = db
+    .prepare(
+      `
+    SELECT id,name,gender,peak_w,best_wh60,total_wh,start_ts,end_ts
+    FROM sessions
+    WHERE date = ? AND end_ts IS NOT NULL
+    ORDER BY start_ts ASC
+  `
+    )
+    .all(date);
+
+  const lines = [
+    "id,name,gender,peak_w,best_wh60,total_wh,start_ts,end_ts",
+    ...rows.map((r) =>
+      [
+        r.id,
+        JSON.stringify(r.name ?? ""),
+        r.gender,
+        r.peak_w,
+        r.best_wh60,
+        r.total_wh,
+        r.start_ts,
+        r.end_ts,
+      ].join(",")
+    ),
+  ];
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="sessions-${date}.csv"`
+  );
+  res.send(lines.join("\n"));
 });
 
 // CSV izvoz za danes

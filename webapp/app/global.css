@@ -1,4 +1,11 @@
-:root { --font-heading: var(--font-roboto-slab); }
+:root{
+  --font-heading: var(--font-roboto-slab);
+  --font-body:    var(--font-body);
+}
+
+body{
+  font-family: var(--font-body), system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
 h1, h2, h3, .heading {
   font-family: var(--font-heading), ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   font-weight: 700;

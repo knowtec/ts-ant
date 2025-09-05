@@ -1,5 +1,5 @@
 import './global.css';
-import { robotoSlab } from "../fonts";
+import { robotoSlab, archivo } from "../fonts";
 
 export const metadata = {
   title: "TermoShop Charity Ride",
@@ -11,7 +11,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="sl" className={robotoSlab.variable}>
+    <html lang="sl" className={`${robotoSlab.variable} ${archivo.variable}`}>
       <body style={{ margin: 0 }}>{children}</body>
     </html>
   );

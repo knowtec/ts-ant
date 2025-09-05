@@ -57,13 +57,25 @@ function Modal({
           background: "white",
           borderRadius: 16,
           padding: 20,
-          width: 420,
+          width: 820,
           boxShadow: "0 20px 60px rgba(2,6,23,.25)",
         }}
       >
         {children}
+
         <div style={{ textAlign: "right", marginTop: 10 }}>
-          <button onClick={onClose} style={{ fontSize: 12 }}>
+          <button
+            onClick={onClose}
+            style={{
+              fontSize: 20,
+              background: "#fff",
+              border: "1px solid black",
+              color: "#000",
+              padding: "15px",
+              display: "block",
+              width: "100%",
+            }}
+          >
             Zapri
           </button>
         </div>
@@ -81,14 +93,21 @@ export default function Page() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [session, setSession] = useState<any | null>(null);
 
-  const [autoRunning, setAutoRunning] = useState(false);
-  const [countdown, setCountdown] = useState<number>(0);
+  const [autoRunning, setAutoRunning] = useState(true); //spremeni nazaj na FALSE
+  const [countdown, setCountdown] = useState<number>(60); //spremeni nazaj na 0
   const [pendingId, setPendingId] = useState<number | null>(null);
 
   // modal form
   const [name, setName] = useState("");
   const [gender, setGender] = useState<"M" | "F">("M");
   const [modalOpen, setModalOpen] = useState(false);
+
+  const [pendingSummary, setPendingSummary] = useState<{
+    id: number;
+    peak_w?: number;
+    best_wh60?: number;
+    total_wh?: number;
+  } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const countdownRef = useRef<any>(null);
@@ -174,12 +193,36 @@ export default function Page() {
         if (msg.type === "session_end" && msg.ended) {
           setAutoRunning(false);
           setPendingId(msg.ended.id);
+          setPendingSummary({
+            id: msg.ended.id,
+            peak_w: Number(msg.ended.peak_w ?? 0),
+            best_wh60: Number(msg.ended.best_wh60 ?? 0),
+            total_wh: Number(msg.ended.total_wh ?? 0),
+          });
           setCountdown(0);
           if (countdownRef.current) {
             clearInterval(countdownRef.current);
             countdownRef.current = null;
           }
           setModalOpen(true);
+        }
+
+        if (msg.type === "session_discarded") {
+          if (pendingId === msg.id) {
+            setModalOpen(false);
+            setPendingId(null);
+            setName("");
+          }
+        }
+
+        if (msg.type === "leaderboard_all") {
+          setLb({
+            date: "ALL", // ali "ALL-TIME" / "Skupno"
+            menWh60: msg.menWh60 ?? [],
+            menPeakW: msg.menPeakW ?? [],
+            womenWh60: msg.womenWh60 ?? [],
+            womenPeakW: msg.womenPeakW ?? [],
+          });
         }
       } catch {}
     };
@@ -188,7 +231,7 @@ export default function Page() {
   useEffect(() => {
     const iv1 = setInterval(async () => {
       try {
-        const r = await fetch(BRIDGE_API + "/api/leaderboard/today");
+        const r = await fetch("/api/leaderboard/all");
         setLb(await r.json());
       } catch {}
       try {
@@ -259,39 +302,57 @@ export default function Page() {
 
   return (
     <main
-      style={{ minHeight: "100vh", background: colorLight, color: colorGrey }}
+      style={{
+        minHeight: "100vh",
+        background: colorGrey,
+        color: colorGrey,
+        display: "flex",
+        flexWrap: "wrap",
+      }}
     >
-      <header
+      <div
         style={{
-          // background: colorRed,
-          color: "white",
-          padding: "16px 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          margin: "0 auto",
+          padding: "16px",
+          display: "grid",
+          gap: 16,
+          width: "100%",
         }}
       >
-        <Image height={80} width={180} src="/termo-logo.svg" alt="TermoShop" />
-        <Image height={90} width={130} src="/letape.png" alt="TermoShop" />
+        <header
+          style={{
+            color: "white",
+            borderRadius: 16,
+            boxShadow: "0 10px 30px rgba(2,6,23,.06)",
+            display: "flex",
+            position: "relative"
+          }}
+        >
+          <img
+            src="/header.jpg"
+            alt="TermoShop"
+            style={{ borderRadius: 16, width: "100%" }}
+          />
 
-        {/* <div style={{ fontSize: 14 }}>
-          {autoRunning ? (
-            <b>Auto session: {countdown}s</b>
-          ) : (
-            <span>Povezano</span>
-          )}
-        </div> */}
-      </header>
+          {/* <BigCountdown seconds={countdown} show={autoRunning} /> */}
+          <BigCountdown seconds={countdown} show={autoRunning} />
 
-      <BigCountdown seconds={countdown} show={autoRunning} />
+          {/* {autoRunning && (
+            <span style={{ fontSize: 12, color: colorRed }}>
+              Preostalo: {countdown}s
+            </span>
+          )} */}
+        </header>
+      </div>
 
       <div
         style={{
           margin: "0 auto",
-          padding: "0 16px",
+          padding: "0 16px 16px",
           display: "grid",
           gap: 16,
-          gridTemplateColumns: "1.2fr .8fr",
+          gridTemplateColumns: "1.4fr .6fr",
+          width: "100%",
         }}
       >
         {/* Left: Live + manual fallback */}
@@ -301,68 +362,63 @@ export default function Page() {
             borderRadius: 16,
             padding: 16,
             boxShadow: "0 10px 30px rgba(2,6,23,.06)",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              alignItems: "center",
-              marginBottom: 12,
-            }}
-          >
-            {!connected && (
-              <button
-                onClick={connect}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  border: `1px solid ${colorGrey}`,
-                  background: colorGrey,
-                  color: "white",
-                }}
-              >
-                {connected ? "Povezano" : "Poveži s trenažerjem"}
-              </button>
-            )}
-
-            {/* {!connected && (
-              <span style={{ fontSize: 12 }}>
-                Run bridge: <code>npm start</code> v <b>ant-node-bridge</b>
-              </span>
-            )} */}
-            {autoRunning && (
-              <span style={{ fontSize: 12, color: colorRed }}>
-                Preostalo: {countdown}s
-              </span>
-            )}
-          </div>
-
           <div
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(3, 1fr)",
               gap: 16,
               marginBottom: 16,
+              flex: 1,
             }}
           >
-            <Metric label="Moč" value={fmtP(aPower)} unit="W" valueSize={120} />
+            <Metric label="Moč" value={fmtP(aPower)} unit="W" valueSize={100} />
             <Metric
               label="Kadenca"
               value={fmtC(aCadence)}
               unit="rpm"
-              valueSize={120}
+              valueSize={100}
             />
             <Metric
               label="Hitrost"
               value={fmtS(aSpeed)}
               unit="km/h"
-              valueSize={120}
+              valueSize={100}
             />
           </div>
 
-          <div style={{ marginTop: "35px" }}>
-            <h2 style={{ marginTop: 0 }}>Zbrana sredstva in energija</h2>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <h2 style={{ marginTop: 0 }}>Zbrana sredstva in energija</h2>
+              {!connected && (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 12,
+                    alignItems: "center",
+                    marginBottom: 12,
+                  }}
+                >
+                  <button
+                    onClick={connect}
+                    style={{
+                      padding: "5px 15px",
+                      borderRadius: 12,
+                      border: `1px solid ${colorGrey}`,
+                      background: colorGrey,
+                      color: "white",
+                    }}
+                  >
+                    {connected ? "Povezano" : "Poveži s trenažerjem"}
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div
               style={{
                 display: "grid",
@@ -385,11 +441,27 @@ export default function Page() {
                 red
               />
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
-              Stopnja: {stats?.euro_per_wh} €/Wh
-            </div>
-          </div>
 
+            <footer
+              style={{
+                marginTop: 20,
+                textAlign: "center",
+                fontSize: 10,
+                color: "#64748b",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ fontSize: 16, color: "#64748b" }}>
+                Tečaj: {stats?.euro_per_wh} € = 1 Wh
+              </div>
+
+              <div style={{ fontSize: 10, textAlign: "center" }}>
+                © by Termo Shop
+              </div>
+            </footer>
+          </div>
           {/* Manual start/end (ostane kot fallback) */}
           {/* <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:16}}>
             <div style={{padding:12, border:'1px solid #e2e8f0', borderRadius:12}}>
@@ -405,17 +477,73 @@ export default function Page() {
             </div>
           </div> */}
         </section>
-
         {/* Right: Leaderboards & totals */}
         <RightPanels lb={lb} stats={stats} />
       </div>
 
       {/* Modal za poimenovanje po auto 60 s */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
-        <h3 style={{ marginTop: 0 }}>Vnesi ime in spol za shranitev</h3>
+      <Modal
+        open={modalOpen}
+        onClose={async () => {
+          // Če modal zapremo brez shranjevanja -> takoj izbrišemo sejo
+          if (pendingId) {
+            try {
+              await fetch("http://127.0.0.1:8080/api/session/discard", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: pendingId }),
+              });
+            } catch {}
+            setPendingId(null);
+            setName("");
+            setPendingSummary(null);
+          }
+          setModalOpen(false);
+        }}
+      >
+        {pendingSummary && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 12,
+              borderRadius: 10,
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#64748b" }}>
+              Tekmovalec: <b>#{pendingSummary.id}</b>
+            </div>
+            <div
+              style={{
+                marginTop: 6,
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 8,
+              }}
+            >
+              <SmallStat
+                label="Moč"
+                value={fmt(pendingSummary.peak_w, 0)}
+                unit="W"
+              />
+              <SmallStat
+                label="Wh / 60s"
+                value={fmt(pendingSummary.best_wh60, 1)}
+                unit="Wh"
+              />
+              <SmallStat
+                label="Skupaj"
+                value={fmt(pendingSummary.total_wh, 1)}
+                unit="Wh"
+              />
+            </div>
+          </div>
+        )}
+        <h3 style={{ marginTop: 0 }}>Vnesi ime, primek in spol tekmovalca</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
           <input
-            placeholder="Ime"
+            placeholder="Ime in Priimek"
             value={name}
             onChange={(e) => setName(e.target.value)}
             style={{
@@ -443,20 +571,23 @@ export default function Page() {
             </label>
           </div>
           <button
+            // gumb "Shrani"
             onClick={async () => {
               if (!pendingId) return;
-              await fetch(BRIDGE_API + "/api/session/rename", {
+              await fetch("http://127.0.0.1:8080/api/session/rename", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ id: pendingId, name, gender }),
               });
+              // brez fetch refetcha – bridge pošlje 'leaderboard_all' po WS
               setModalOpen(false);
               setPendingId(null);
+              setPendingSummary(null);
               setName("");
             }}
             style={{
-              padding: "8px 12px",
-              borderRadius: 10,
+              padding: "18px 22px",
+              borderRadius: 25,
               border: "1px solid #e11d48",
               background: "#e11d48",
               color: "white",
@@ -466,17 +597,6 @@ export default function Page() {
           </button>
         </div>
       </Modal>
-
-      <footer
-        style={{
-          textAlign: "center",
-          fontSize: 10,
-          color: "#64748b",
-          padding: "12px 0",
-        }}
-      >
-        © by Termo Shop
-      </footer>
     </main>
   );
 }
@@ -554,7 +674,7 @@ function RightPanels({
           boxShadow: "0 10px 30px rgba(2,6,23,.06)",
         }}
       >
-        <h2 style={{ marginTop: 0 }}>Današnje lestvice</h2>
+        <h2 style={{ marginTop: 0 }}>Lestvice</h2>
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
         >
@@ -601,7 +721,7 @@ function Metric({
 }) {
   return (
     <div style={{ padding: 16, border: "1px solid #e2e8f0", borderRadius: 12 }}>
-      <div style={{ color: "#64748b", fontSize: 12 }}>{label}</div>
+      <div style={{ color: "#64748b", fontSize: 26 }}>{label}</div>
       <div
         style={{
           fontSize: valueSize,
@@ -614,7 +734,7 @@ function Metric({
         {value ?? "—"}{" "}
         <span
           style={{
-            fontSize: Math.max(14, Math.round(valueSize / 2)),
+            fontSize: Math.max(12, Math.round(valueSize / 2)),
             color: "#64748b",
           }}
         >
@@ -651,7 +771,7 @@ function Board({
           color: "white",
           padding: "8px 12px",
           fontWeight: 700,
-          fontSize: "28px",
+          fontSize: "22px",
         }}
       >
         {title}
@@ -663,14 +783,21 @@ function Board({
             style={{
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "center",
               padding: "6px 0",
               borderBottom: "1px dashed #e2e8f0",
-              fontSize: "24px",
+              fontSize: "20px",
             }}
           >
-            <span>
-              <b>{i + 1}.</b> {r.name}
-            </span>
+            <div style={{ display: "flex", flex: 1 }}>
+              <b>{i + 1}. </b>
+              {r.name}{" "}
+            </div>
+
+            <div style={{ color: "grey", marginRight: 15 }}>
+              {" "}
+              {typeof r?.id === "number" ? `#${r.id}` : "—"}{" "}
+            </div>
             <span>
               <b>
                 {(r[valueKey] ?? 0).toFixed
@@ -703,7 +830,7 @@ function StatBox({
 }) {
   return (
     <div style={{ padding: 16, border: "1px solid #e2e8f0", borderRadius: 12 }}>
-      <div style={{ color: "#64748b", fontSize: 22 }}>{label}</div>
+      <div style={{ color: "#64748b", fontSize: 25 }}>{label}</div>
       <div
         style={{
           fontSize: 68,
@@ -722,13 +849,15 @@ function BigCountdown({ seconds, show }: { seconds: number; show: boolean }) {
   return (
     <div
       style={{
-        position: "fixed",
-        inset: 0,
+        position: "absolute",
         display: "grid",
         placeItems: "center",
         pointerEvents: "none",
         zIndex: 60,
         background: "rgba(248,250,252,0.0)",
+        top: "50%",
+        transform: "translateY(-50%)",
+        right: 40
       }}
     >
       <div
@@ -765,6 +894,32 @@ function BigCountdown({ seconds, show }: { seconds: number; show: boolean }) {
           </div>
           <div style={{ fontSize: 16, color: "#334155" }}>sekund</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SmallStat({
+  label,
+  value,
+  unit,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+}) {
+  return (
+    <div
+      style={{
+        padding: 8,
+        borderRadius: 8,
+        background: "white",
+        border: "1px solid #eef2f7",
+      }}
+    >
+      <div style={{ fontSize: 20, color: "#64748b" }}>{label}</div>
+      <div style={{ fontWeight: 800, fontSize: 100 }}>
+        {value} <span style={{ fontSize: 35, color: "#64748b" }}>{unit}</span>
       </div>
     </div>
   );
