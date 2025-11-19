@@ -316,7 +316,7 @@ export default function Page() {
         setLb(await r.json());
       } catch {}
       try {
-        const r = await fetch(BRIDGE_API + "/api/stats");
+        const r = await fetch("/api/stats");
         setStats(await r.json());
       } catch {}
       try {
@@ -416,7 +416,7 @@ export default function Page() {
           <img
             src="/header.jpg"
             alt="TermoShop"
-            style={{ borderRadius: 16, width: "100%" }}
+            style={{ borderRadius: 16, width: "100%", objectFit: "fill" }}
           />
 
           {/* <BigCountdown seconds={countdown} show={autoRunning} /> */}
@@ -436,7 +436,7 @@ export default function Page() {
           padding: "0 16px 16px",
           display: "grid",
           gap: 16,
-          gridTemplateColumns: "1.4fr .6fr",
+          gridTemplateColumns: "1.3fr .7fr",
           width: "100%",
         }}
       >
@@ -700,7 +700,7 @@ export default function Page() {
           zone.pct * 100
         )}% FTP • ${Math.round(effectivePower)} W`}
       />
-      <RecordOverlay show={showRecord} onDone={() => setShowRecord(false)} />
+      {/* <RecordOverlay show={showRecord} onDone={() => setShowRecord(false)} /> */}
       {/* simulacija CON */}
       {/* <div
         style={{
@@ -968,7 +968,7 @@ function Board({
           color: "white",
           padding: "8px 12px",
           fontWeight: 700,
-          fontSize: "28px",
+          fontSize: "22px",
         }}
       >
         {title}
@@ -984,7 +984,7 @@ function Board({
                 justifyContent: "space-between",
                 padding: "6px 0",
                 borderBottom: "1px dashed #e2e8f0",
-                fontSize: "24px",
+                fontSize: "18px",
                 borderRadius: 10,
                 boxShadow: isHL
                   ? "0 0 0 4px rgba(219,11,51,.15), 0 0 24px rgba(219,11,51,.35)"
